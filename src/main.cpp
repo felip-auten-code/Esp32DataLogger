@@ -34,6 +34,7 @@
 #include "sdcard.h"
 #include "esp_system.h"
 #include <Wire.h>
+#include <PubSubClient.h>
 
 #define I2C_SLAVE_ADDRESS 0x12     // I2C address of the STM32F4
 #define MAX_DATA_LENGTH 200        // Length of data expected from STM32F4
@@ -55,9 +56,7 @@ String    CURRENT_WORK_PATH;
 
 // put function declarations here:
 void ScanI2CAddrs();
-void receiver(int n_bytes);
 void rec(int n_bytes);
-void requestDataFromSTM32();
 
 void setup() {
   // put your setup code here, to run once:
@@ -130,8 +129,8 @@ void loop() {
   if(flagConfsReceived){                            // Recebeu o Frame de início do trabalho
     flagConfsReceived = false;
     uint32_t NUMB = esp_random();
-    sprintf(path, "/Logs/Work%d.txt", NUMB);
-    sprintf(name, "WORK: %d \n%s \n", NUMB, DataFromST);
+    sprintf(path, "/Logs/Work%d.txt", NUMB);                // Nome do arquivo - random
+    sprintf(name, "WORK: %d \n%s \n", NUMB, DataFromST);    // Configurações importantes -> Primeira linha do arquyivo
     CURRENT_WORK_NUMB = NUMB;
     flagFileCreated=true;
     start_millis = millis();
@@ -163,19 +162,19 @@ void ScanI2CAddrs(){
     }
 }
 
-void rec(int n_bytes){
+void rec(int n_bytes){              // Recebe stream de dados da porta I2C e Guarda em String
   while(Wire.available()){
     char c = Wire.read();
-    if(c != '$' && c != '&' && c != '#'){
+    if(c != '$' && c != '&' && c != '#'){         // Acumunla informação
       DataFromST[indexData] = c;
       indexData++;
     }
-    if(c == '#' ){
+    if(c == '#' ){                                // Final do Frame de excecução
       //DataFromST[indexData] = '\n';
       indexData = 0;
       //Serial.println(DataFromST);
       flagDataFrame = true;
-    }else if( c == '*'){                  // deve criar novo arquivo com o novo trablaho
+    }else if( c == '*'){                          // deve criar novo arquivo com o novo trablaho
       DataFromST[indexData] = '\n';
       indexData = 0;
       flagConfsReceived = true;
@@ -185,62 +184,4 @@ void rec(int n_bytes){
 
 void SaveFrame(String in){
   
-}
-
-void receiver(int n_bytes){
-  while(Wire.available()){
-    char c = Wire.read();
-    int excec=0;
-
-  if(excec == 1){
-    DataFromST[indexData] = c;
-    indexData++;
-  }else if(excec == 99){
-    ConfsFromST[indexConfs] = c;
-    indexConfs++;
-  }
-
-
-    if(c == '$'){               // Start of Frame
-      indexData = 0;
-      memset(DataFromST, 0, sizeof(DataFromST));
-      excec = 1;
-    }else if(c == '#'){         // End of Frame
-      indexData = 0;
-      flagDataFrame = true;
-
-    }else if(c == '&'){         // Start of Confs
-      excec = 99;
-      indexConfs = 0;
-      memset(ConfsFromST, 0, sizeof(ConfsFromST));
-    }else if(c == '*'){         // End of Confs
-      flagConfsReceived = true;
-      indexConfs = 0;
-    }
-    //Serial.printf("RECEIVED: %c \n", c);
-  }
-  delay(250);
-}
-
-void requestDataFromSTM32() {
-  // Request data from the STM32F4 without blocking
-  Wire.requestFrom(I2C_SLAVE_ADDRESS, MAX_DATA_LENGTH);
-
-  int index = 0;
-  while (Wire.available()) {
-    if (index < MAX_DATA_LENGTH) {
-      receivedData[index] = Wire.read();  // Read each byte and store it in the buffer
-      Serial.print("RECEIIVED:  ");
-      Serial.println(receivedData[index]);
-      index++;
-      
-    }
-  }
-
-  receivedData[index] = '\0';  // Null-terminate the string
-
-  // If data was received, set the flag to process it
-  if (index > 0) {
-    dataAvailable = true;
-  }
 }

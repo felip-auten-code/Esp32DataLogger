@@ -35,6 +35,9 @@
 #include "esp_system.h"
 #include <Wire.h>
 #include <PubSubClient.h>
+#include <ESP32WebServer.h>
+#include <ESPmDNS.h>
+
 
 #define I2C_SLAVE_ADDRESS 0x12     // I2C address of the STM32F4
 #define MAX_DATA_LENGTH 200        // Length of data expected from STM32F4
@@ -57,58 +60,26 @@ String    CURRENT_WORK_PATH;
 // put function declarations here:
 void ScanI2CAddrs();
 void rec(int n_bytes);
+void TaskReceiveAndSave(void *param);
+void checkSDCard();
+void setupI2C_STM32();
+
+TaskHandle_t ReceiveAndSave;
 
 void setup() {
   // put your setup code here, to run once:
   Serial.begin(9600);
-  if(!SD.begin(5)){
-    Serial.println("Card Mount Failed");
-    return;
-  }
-  uint8_t cardType = SD.cardType();
 
-  if(cardType == CARD_NONE){
-    Serial.println("No SD card attached");
-    return;
-  }
+  checkSDCard();
 
-  Serial.print("SD Card Type: ");
-  if(cardType == CARD_MMC){
-    Serial.println("MMC");
-  } else if(cardType == CARD_SD){
-    Serial.println("SDSC");
-  } else if(cardType == CARD_SDHC){
-    Serial.println("SDHC");
-  } else {
-    Serial.println("UNKNOWN");
-  }
+  xTaskCreatePinnedToCore(  TaskReceiveAndSave, 
+                            "TaskReceiveAndSave", 
+                            4096, 
+                            NULL, 
+                            3, 
+                            &ReceiveAndSave, 
+                            1);
 
-  uint64_t cardSize = SD.cardSize() / (1024 * 1024);
-  Serial.printf("SD Card Size: %lluMB\n", cardSize);
-
-  File logs = SD.open("/Logs","r", true);
-  if(logs){
-    Serial.println("yes logs");
-  }else{
-    Serial.println("not logs");
-    createDir(SD, "/Logs");
-  }
-  logs = SD.open("/Logs","r", true);
-  if(logs){
-    Serial.println("yes logs");
-  }else{
-    Serial.println("not logs");
-  }
-  listDir(SD, "/", 3);
-
-  Serial.printf("Total space: %lluMB\n", SD.totalBytes() / (1024 * 1024));
-  Serial.printf("Used space: %lluMB\n", SD.usedBytes() / (1024 * 1024));
-
-  Wire.setBufferSize(526);
-  Wire.begin(30);
-  Wire.onReceive(rec);
-
-  //ScanI2CAddrs(); 
 }
 
 void loop() {
@@ -135,6 +106,35 @@ void loop() {
     flagFileCreated=true;
     start_millis = millis();
     writeFile(SD, path, name);
+  }
+}
+
+void TaskReceiveAndSave(void *param){
+  
+  char path[30] = {0}, name[50]={0}, time[10];
+  while(1){
+    if(flagDataFrame){                                          // Chegou um frame de informação na porta i2c
+      flagDataFrame = false;
+      Serial.println(flagFileCreated);
+      if(flagFileCreated){                                      // Caso o arquivo ja tenha sido criado -> adicione as linhas
+        sprintf(path, "/Logs/Work%d.txt", CURRENT_WORK_NUMB);
+        sprintf(DataFromST, "%s-%s\n", DataFromST, itoa(millis()-start_millis, time, 10 ));
+        appendFile(SD, path, DataFromST);
+        Serial.println(path);
+      }
+      memset(DataFromST, 0, sizeof(DataFromST));                // Clean Buffer
+      //delay(50);
+    } 
+    if(flagConfsReceived){                                      // Recebeu o Frame de início do trabalho
+      flagConfsReceived = false;
+      uint32_t NUMB = esp_random();
+      sprintf(path, "/Logs/Work%d.txt", NUMB);                  // Nome do arquivo - random
+      sprintf(name, "WORK: %d \n%s \n", NUMB, DataFromST);      // Configurações importantes -> Primeira linha do arquyivo
+      CURRENT_WORK_NUMB = NUMB;
+      flagFileCreated=true;
+      start_millis = millis();
+      writeFile(SD, path, name);
+    }
   }
 }
 
@@ -184,4 +184,56 @@ void rec(int n_bytes){              // Recebe stream de dados da porta I2C e Gua
 
 void SaveFrame(String in){
   
+}
+
+void checkSDCard(){
+  if(!SD.begin(5)){
+    Serial.println("Card Mount Failed");
+    return;
+  }
+  uint8_t cardType = SD.cardType();
+
+  if(cardType == CARD_NONE){
+    Serial.println("No SD card attached");
+    return;
+  }
+
+  Serial.print("SD Card Type: ");
+  if(cardType == CARD_MMC){
+    Serial.println("MMC");
+  } else if(cardType == CARD_SD){
+    Serial.println("SDSC");
+  } else if(cardType == CARD_SDHC){
+    Serial.println("SDHC");
+  } else {
+    Serial.println("UNKNOWN");
+  }
+
+  uint64_t cardSize = SD.cardSize() / (1024 * 1024);
+  Serial.printf("SD Card Size: %lluMB\n", cardSize);
+
+  File logs = SD.open("/Logs","r", true);
+  if(logs){
+    Serial.println("yes logs");
+  }else{
+    Serial.println("not logs");
+    createDir(SD, "/Logs");
+  }
+  logs = SD.open("/Logs","r", true);
+  if(logs){
+    Serial.println("yes logs");
+  }else{
+    Serial.println("not logs");
+  }
+  listDir(SD, "/", 3);
+
+  Serial.printf("Total space: %lluMB\n", SD.totalBytes() / (1024 * 1024));
+  Serial.printf("Used space: %lluMB\n", SD.usedBytes() / (1024 * 1024));
+
+}
+
+void setupI2C_STM32(){
+  Wire.setBufferSize(526);
+  Wire.begin(30);
+  Wire.onReceive(rec);
 }
